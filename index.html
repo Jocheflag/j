@@ -688,6 +688,230 @@ footer{
 
 </div><!-- /below-fold -->
 
-<!-- JS injected in Part 2 -->
+<script>
+(function(){
+  console.log("Three.js loaded");
+
+  /* ── RENDERER ─────────────────────────────────────────────── */
+  var canvas = document.getElementById('bg-canvas');
+  var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, alpha:false});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x000000, 1);
+
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 2000);
+  camera.position.set(0, 2, 14);
+  camera.lookAt(0, 0, 0);
+
+  /* ── LIGHTS ───────────────────────────────────────────────── */
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  var camLight = new THREE.PointLight(0xffffff, 0.9, 40);
+  scene.add(camLight);
+
+  /* ── STARFIELD ────────────────────────────────────────────── */
+  var starCount = 3000;
+  var starPos   = new Float32Array(starCount * 3);
+  for(var i = 0; i < starCount; i++){
+    starPos[i*3]   = (Math.random()-0.5)*200;
+    starPos[i*3+1] = (Math.random()-0.5)*200;
+    starPos[i*3+2] = (Math.random()-0.5)*200;
+  }
+  var starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
+  var stars = new THREE.Points(starGeo, new THREE.PointsMaterial({color:0xffffff, size:0.06, sizeAttenuation:true}));
+  scene.add(stars);
+
+  /* ── ORBITAL GROUP ────────────────────────────────────────── */
+  var orbitGroup = new THREE.Group();
+  scene.add(orbitGroup);
+  orbitGroup.rotation.x = 0.26; // 15° tilt
+
+  // Ring — large torus in XZ plane (rotate 90° on X so it lies flat)
+  var ringGeo  = new THREE.TorusGeometry(8, 0.06, 16, 100);
+  var ringMat  = new THREE.MeshBasicMaterial({color:0x3DDB71, transparent:true, opacity:0.4});
+  var ringMesh = new THREE.Mesh(ringGeo, ringMat);
+  ringMesh.rotation.x = Math.PI/2; // lay flat in XZ plane
+  orbitGroup.add(ringMesh);
+
+  /* ── PLANETS ─────────────────────────────────────────────── */
+  // Planet 0 starts at front (z=+8, angle=PI/2) so it's closest to camera at scroll=0
+  var PCFG = [
+    {angle:Math.PI/2,      color:0xff6b35, emissive:0xff2200, r:0.80, idx:0},
+    {angle:Math.PI,        color:0x4a9eff, emissive:0x0044cc, r:0.90, idx:1},
+    {angle:3*Math.PI/2,    color:0x3DDB71, emissive:0x00aa44, r:0.85, idx:2},
+    {angle:2*Math.PI,      color:0xa855f7, emissive:0x6600cc, r:0.75, idx:3},
+  ];
+
+  var planets = [];
+  PCFG.forEach(function(pc){
+    var geo  = new THREE.SphereGeometry(pc.r, 32, 32);
+    var mat  = new THREE.MeshStandardMaterial({
+      color:pc.color, emissive:pc.emissive,
+      emissiveIntensity:0.4, roughness:0.35, metalness:0.2
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+    // Position on ring in XZ plane
+    mesh.position.x = 8 * Math.cos(pc.angle);
+    mesh.position.z = 8 * Math.sin(pc.angle);
+    orbitGroup.add(mesh);
+
+    // Accent point light attached to planet
+    var pl = new THREE.PointLight(pc.color, 1.2, 8);
+    mesh.add(pl);
+
+    // Moon(s)
+    var moonGroup = new THREE.Group();
+    mesh.add(moonGroup);
+    var mCount = (pc.idx % 2 === 0) ? 1 : 2;
+    for(var m = 0; m < mCount; m++){
+      var mMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 8, 8),
+        new THREE.MeshStandardMaterial({color:0xcccccc, emissive:0x888888, emissiveIntensity:0.3})
+      );
+      mMesh.position.x = 1.5 + m * 0.7;
+      moonGroup.add(mMesh);
+    }
+
+    planets.push({mesh:mesh, mat:mat, moonGroup:moonGroup, targetScale:1});
+  });
+
+  /* ── SCROLL STATE ─────────────────────────────────────────── */
+  var scrollY      = 0;
+  var currentRotY  = 0;
+  var autoRot      = 0;
+  var activeIdx    = 0;
+  var time         = 0;
+  var lastNavScrollY = 0;
+
+  var rafPending = false;
+  window.addEventListener('scroll', function(){
+    if(!rafPending){
+      rafPending = true;
+      requestAnimationFrame(function(){ scrollY = window.scrollY; rafPending = false; });
+    }
+  }, {passive:true});
+
+  /* ── PANEL / DOT REFS ─────────────────────────────────────── */
+  var panels = [0,1,2,3].map(function(i){ return document.getElementById('panel-'+i); });
+  var dots   = document.querySelectorAll('.p-dot');
+  var hero   = document.getElementById('hero');
+  var nav    = document.getElementById('nav');
+  var progressDots = document.getElementById('progress-dots');
+
+  function lerp(a,b,t){ return a+(b-a)*t; }
+
+  function setActivePanel(idx){
+    panels.forEach(function(p,i){
+      p.classList.toggle('active', i===idx);
+      p.classList.toggle('inactive', i!==idx);
+    });
+    dots.forEach(function(d,i){ d.classList.toggle('active', i===idx); });
+  }
+
+  /* ── DOT CLICK ────────────────────────────────────────────── */
+  var ORBITAL_MAX = window.innerHeight * 4; // 400vh for orbital
+  dots.forEach(function(dot){
+    dot.addEventListener('click', function(){
+      var idx = parseInt(dot.dataset.idx);
+      window.scrollTo({top: (idx/4) * ORBITAL_MAX + 10, behavior:'smooth'});
+    });
+  });
+
+  /* ── ANIMATE ──────────────────────────────────────────────── */
+  function animate(){
+    requestAnimationFrame(animate);
+    time   += 0.016;
+    autoRot += 0.001;
+
+    var sy  = scrollY;
+    var max = Math.max(1, ORBITAL_MAX);
+    var prog = Math.min(sy / max, 1);
+
+    // Ring rotation: scroll drives -2π full rotation + slow auto spin
+    var targetRotY = -prog * Math.PI * 2 + autoRot;
+    currentRotY = lerp(currentRotY, targetRotY, 0.06);
+    orbitGroup.rotation.y = currentRotY;
+
+    // Active planet
+    var newIdx = Math.min(Math.floor(prog * 4), 3);
+    if(newIdx !== activeIdx){ activeIdx = newIdx; setActivePanel(activeIdx); }
+
+    // Planet scale + glow
+    planets.forEach(function(p,i){
+      var active  = (i === activeIdx);
+      var tScale  = active ? 2.5 : 1.0;
+      var ns      = lerp(p.mesh.scale.x, tScale, 0.07);
+      p.mesh.scale.set(ns, ns, ns);
+      p.mat.emissiveIntensity = lerp(p.mat.emissiveIntensity, active ? 1.4 : 0.35, 0.08);
+      p.moonGroup.rotation.y  = time * (0.8 + i * 0.35);
+    });
+
+    // Stars slow drift
+    stars.rotation.y = time * 0.008;
+
+    // Camera bob + slight Z push
+    camera.position.y = 2 + Math.sin(time * 0.3) * 0.15;
+    camera.position.z = 14 - (prog * 1.5);
+    camLight.position.copy(camera.position);
+    camera.lookAt(0, 0, 0);
+
+    // Hero fade + parallax
+    var heroOp = Math.max(0, 1 - sy / 200);
+    hero.style.opacity   = heroOp;
+    hero.style.transform = 'translate(-50%, calc(-50% + ' + (sy * -0.3) + 'px))';
+
+    // Show/hide orbital UI
+    var inOrbit = sy < ORBITAL_MAX + window.innerHeight * 0.5;
+    panels.forEach(function(p){ p.style.visibility = inOrbit ? '' : 'hidden'; });
+    progressDots.style.opacity = inOrbit ? '1' : '0';
+
+    // Navbar hide/show
+    if(sy > lastNavScrollY && sy > 80){ nav.classList.add('hidden'); }
+    else { nav.classList.remove('hidden'); }
+    nav.classList.toggle('solid', sy > 50);
+    lastNavScrollY = sy;
+
+    renderer.render(scene, camera);
+  }
+
+  // Init
+  setActivePanel(0);
+  animate();
+
+  /* ── RESIZE ───────────────────────────────────────────────── */
+  window.addEventListener('resize', function(){
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    ORBITAL_MAX = window.innerHeight * 4;
+  });
+
+  /* ── FADE-UP OBSERVER ─────────────────────────────────────── */
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('visible'); io.unobserve(e.target); }
+    });
+  }, {threshold:0.15});
+  document.querySelectorAll('.fade-up').forEach(function(el){ io.observe(el); });
+
+  /* ── CAROUSEL DRAG ────────────────────────────────────────── */
+  var track = document.getElementById('cases-track');
+  var isDown=false, startX, scrollLeft;
+  track.addEventListener('mousedown', function(e){
+    isDown=true; track.classList.add('dragging');
+    startX=e.pageX-track.offsetLeft; scrollLeft=track.scrollLeft;
+  });
+  ['mouseleave','mouseup'].forEach(function(ev){
+    track.addEventListener(ev, function(){ isDown=false; track.classList.remove('dragging'); });
+  });
+  track.addEventListener('mousemove', function(e){
+    if(!isDown) return;
+    e.preventDefault();
+    track.scrollLeft = scrollLeft - (e.pageX - track.offsetLeft - startX) * 1.2;
+  });
+
+})();
+</script>
 </body>
 </html>
