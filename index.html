@@ -204,12 +204,12 @@ body{
   position:fixed;
   bottom:8%;
   left:50%;
-  transform:translateX(-50%) translateY(12px);
+  transform:translateX(-50%) translateY(20px);
   z-index:10;
   text-align:center;
   pointer-events:none;
   opacity:0;
-  transition:opacity 0.6s var(--ease),transform 0.6s var(--ease);
+  transition:opacity 0.5s ease-out, transform 0.5s ease-out;
   width:90vw;
   max-width:600px;
   background:rgba(0,0,0,0.6);
@@ -218,12 +218,30 @@ body{
   border-radius:16px;
   padding:2rem 3rem;
 }
+.orbit-panel::before{
+  content:'';
+  display:block;
+  width:0;
+  height:2px;
+  background:var(--accent);
+  margin:0 auto 0.9rem;
+  border-radius:1px;
+  transition:width 0.5s ease-out;
+}
 .orbit-panel.active{
   opacity:1;
   transform:translateX(-50%) translateY(0);
 }
+.orbit-panel.active::before{
+  width:40px;
+}
+.orbit-panel.exiting{
+  opacity:0;
+  transform:translateX(-50%) translateY(-20px);
+}
 .orbit-panel.inactive{
-  transform:translateX(-50%) translateY(12px);
+  opacity:0;
+  transform:translateX(-50%) translateY(20px);
 }
 .panel-label{
   font-size:0.7rem;
@@ -711,10 +729,7 @@ footer{
 
   /* ── RENDERER ─────────────────────────────────────────────── */
   var canvas = document.getElementById('bg-canvas');
-  // Ensure canvas is first child for correct z-stacking
-  if(document.body.firstChild !== canvas){
-    document.body.insertBefore(canvas, document.body.firstChild);
-  }
+  if(document.body.firstChild !== canvas) document.body.insertBefore(canvas, document.body.firstChild);
   var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, alpha:false});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -726,33 +741,61 @@ footer{
   camera.lookAt(0, 0, 0);
 
   /* ── LIGHTS ───────────────────────────────────────────────── */
-  scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-  var camLight = new THREE.PointLight(0xffffff, 0.8, 40);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  var camLight  = new THREE.PointLight(0xffffff, 0.7, 50);
   scene.add(camLight);
-  // Active-planet glow light — moves to active planet each frame
-  var glowLight = new THREE.PointLight(0x3DDB71, 2.0, 12);
+  var glowLight = new THREE.PointLight(0x3DDB71, 2.5, 14);
   scene.add(glowLight);
 
-  /* ── STARFIELD ────────────────────────────────────────────── */
-  var starCount = 3000;
-  var starPos   = new Float32Array(starCount * 3);
-  for(var i = 0; i < starCount; i++){
-    starPos[i*3]   = (Math.random()-0.5)*200;
-    starPos[i*3+1] = (Math.random()-0.5)*200;
-    starPos[i*3+2] = (Math.random()-0.5)*200;
+  /* ── STARFIELD — 4000 stars in 3 size groups ─────────────── */
+  function makeStarField(count, size, spread){
+    var pos = new Float32Array(count*3);
+    for(var i=0;i<count;i++){
+      pos[i*3]   = (Math.random()-0.5)*spread;
+      pos[i*3+1] = (Math.random()-0.5)*spread;
+      pos[i*3+2] = (Math.random()-0.5)*spread;
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    return new THREE.Points(g, new THREE.PointsMaterial({color:0xffffff,size:size,sizeAttenuation:true}));
   }
-  var starGeo = new THREE.BufferGeometry();
-  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
-  var stars = new THREE.Points(starGeo,
-    new THREE.PointsMaterial({color:0xffffff, size:0.06, sizeAttenuation:true}));
-  scene.add(stars);
+  var starsTiny   = makeStarField(3200, 0.04, 220);
+  var starsMed    = makeStarField(600,  0.09, 200);
+  var starsBright = makeStarField(200,  0.15, 180);
+  starsBright.material.transparent = true;
+  starsBright.material.opacity     = 1.0;
+  scene.add(starsTiny); scene.add(starsMed); scene.add(starsBright);
+
+  /* ── BRIGHT STAR FLARE SPRITES ────────────────────────────── */
+  (function(){
+    var c   = document.createElement('canvas');
+    c.width = c.height = 64;
+    var ctx = c.getContext('2d');
+    var g   = ctx.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0,  'rgba(255,255,255,1)');
+    g.addColorStop(0.12,'rgba(200,255,220,0.7)');
+    g.addColorStop(1,  'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+    ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(32,3); ctx.lineTo(32,61); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(3,32); ctx.lineTo(61,32); ctx.stroke();
+    var tex = new THREE.CanvasTexture(c);
+    [[-42,22,-85],[-65,-28,52],[78,38,-58],[48,-52,88],[-72,12,42],[28,62,-48]]
+      .forEach(function(p){
+        var s = new THREE.Sprite(new THREE.SpriteMaterial({
+          map:tex,transparent:true,opacity:0.65,blending:THREE.AdditiveBlending
+        }));
+        s.position.set(p[0],p[1],p[2]); s.scale.set(2.2,2.2,1);
+        scene.add(s);
+      });
+  })();
 
   /* ── ORBITAL GROUP ────────────────────────────────────────── */
   var orbitGroup = new THREE.Group();
   scene.add(orbitGroup);
-  orbitGroup.rotation.x = 0.26; // ~15° tilt
+  orbitGroup.rotation.x = Math.PI * 0.35; // dramatic tilt
 
-  // Ring: large torus lying flat in XZ plane
+  // Main ring
   var ringMesh = new THREE.Mesh(
     new THREE.TorusGeometry(8, 0.06, 16, 100),
     new THREE.MeshBasicMaterial({color:0x3DDB71, transparent:true, opacity:0.5})
@@ -760,12 +803,36 @@ footer{
   ringMesh.rotation.x = Math.PI / 2;
   orbitGroup.add(ringMesh);
 
-  /* ── PLANETS — all mint green, differentiated by size ────── */
+  // Ghost ring (Saturn depth effect)
+  var ghostRing = new THREE.Mesh(
+    new THREE.TorusGeometry(8.3, 0.02, 8, 100),
+    new THREE.MeshBasicMaterial({color:0x3DDB71, transparent:true, opacity:0.15})
+  );
+  ghostRing.rotation.x = Math.PI / 2 + 0.06;
+  orbitGroup.add(ghostRing);
+
+  /* ── RING PARTICLES — 80 pts traveling along ring ─────────── */
+  var RP_COUNT   = 80;
+  var rpAngles   = new Float32Array(RP_COUNT);
+  var rpSpeeds   = new Float32Array(RP_COUNT);
+  var rpPos      = new Float32Array(RP_COUNT * 3);
+  for(var i=0; i<RP_COUNT; i++){
+    rpAngles[i] = (i/RP_COUNT) * Math.PI * 2;
+    rpSpeeds[i] = 0.002 + Math.random() * 0.004;
+  }
+  var rpGeo = new THREE.BufferGeometry();
+  rpGeo.setAttribute('position', new THREE.BufferAttribute(rpPos, 3));
+  var rpMesh = new THREE.Points(rpGeo,
+    new THREE.PointsMaterial({color:0x3DDB71, size:0.09, sizeAttenuation:true,
+      transparent:true, opacity:0.85}));
+  orbitGroup.add(rpMesh);
+
+  /* ── PLANETS ─────────────────────────────────────────────── */
   var PCFG = [
-    {angle:Math.PI/2,    r:0.90, emissiveInt:0.40, idx:0}, // Acquisition
-    {angle:Math.PI,      r:0.70, emissiveInt:0.30, idx:1}, // Retention
-    {angle:3*Math.PI/2,  r:1.10, emissiveInt:0.50, idx:2}, // Conversion
-    {angle:2*Math.PI,    r:0.80, emissiveInt:0.35, idx:3}, // Optimization
+    {angle:Math.PI/2,   r:0.90, emissiveInt:0.40, idx:0},
+    {angle:Math.PI,     r:0.70, emissiveInt:0.30, idx:1},
+    {angle:3*Math.PI/2, r:1.10, emissiveInt:0.50, idx:2},
+    {angle:2*Math.PI,   r:0.80, emissiveInt:0.35, idx:3},
   ];
 
   var planets = [];
@@ -779,16 +846,20 @@ footer{
     mesh.position.z = 8 * Math.sin(pc.angle);
     orbitGroup.add(mesh);
 
-    // Moons — same green
+    // Atmospheric halo (BackSide sphere — corona glow)
+    mesh.add(new THREE.Mesh(
+      new THREE.SphereGeometry(pc.r * 1.4, 16, 16),
+      new THREE.MeshBasicMaterial({color:0x3DDB71,transparent:true,opacity:0.08,side:THREE.BackSide})
+    ));
+
+    // Moons
     var moonGroup = new THREE.Group();
     mesh.add(moonGroup);
     var mCount = (pc.idx % 2 === 0) ? 1 : 2;
-    for(var m = 0; m < mCount; m++){
+    for(var m=0; m<mCount; m++){
       var mMesh = new THREE.Mesh(
         new THREE.SphereGeometry(0.08, 8, 8),
-        new THREE.MeshStandardMaterial({
-          color:0x3DDB71, emissive:0x3DDB71, emissiveIntensity:0.6
-        })
+        new THREE.MeshStandardMaterial({color:0x3DDB71,emissive:0x3DDB71,emissiveIntensity:0.6})
       );
       mMesh.position.x = pc.r + 0.4 + m * 0.5;
       moonGroup.add(mMesh);
@@ -797,14 +868,17 @@ footer{
     planets.push({mesh:mesh, mat:mat, moonGroup:moonGroup});
   });
 
-  /* ── SCROLL STATE ─────────────────────────────────────────── */
+  /* ── STATE ────────────────────────────────────────────────── */
   var scrollY        = 0;
   var currentRotY    = 0;
+  var rotVelocity    = 0;
+  var prevSY         = 0;
   var autoRot        = 0;
   var activeIdx      = 0;
+  var prevActiveIdx  = -1;
   var time           = 0;
   var lastNavScrollY = 0;
-  var ORBITAL_MAX    = window.innerHeight * 4; // 400vh
+  var ORBITAL_MAX    = window.innerHeight * 4;
 
   var rafPending = false;
   window.addEventListener('scroll', function(){
@@ -823,13 +897,31 @@ footer{
   var progressDots  = document.getElementById('progress-dots');
 
   function lerp(a,b,t){ return a+(b-a)*t; }
+  function easeInOutCubic(t){
+    return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+  }
 
+  /* ── PANEL TRANSITION: exit up, enter from below ─────────── */
   function setActivePanel(idx){
+    if(idx === prevActiveIdx) return;
     panels.forEach(function(p,i){
-      p.classList.toggle('active', i===idx);
-      p.classList.toggle('inactive', i!==idx);
+      if(i === prevActiveIdx){
+        p.classList.remove('active');
+        p.classList.add('exiting');
+        var el = p;
+        setTimeout(function(){
+          if(!el.classList.contains('active')){ el.classList.remove('exiting'); el.classList.add('inactive'); }
+        }, 520);
+      } else if(i === idx){
+        p.classList.remove('inactive','exiting');
+        requestAnimationFrame(function(){ p.classList.add('active'); });
+      } else {
+        p.classList.remove('active','exiting');
+        p.classList.add('inactive');
+      }
     });
     dots.forEach(function(d,i){ d.classList.toggle('active', i===idx); });
+    prevActiveIdx = idx;
   }
 
   /* ── DOT CLICK ────────────────────────────────────────────── */
@@ -847,70 +939,83 @@ footer{
     time    += 0.016;
     autoRot += 0.001;
 
-    var sy   = scrollY;
-    var prog = Math.min(sy / Math.max(1, ORBITAL_MAX), 1);
+    var sy         = scrollY;
+    var scrollDelta = sy - prevSY;
+    prevSY          = sy;
+    var rawProg     = Math.min(sy / Math.max(1, ORBITAL_MAX), 1);
+    var prog        = easeInOutCubic(rawProg);
 
-    // Ring rotation driven by scroll + slow auto-spin
+    // Spring overshoot from scroll velocity — weighted, cinematic
+    rotVelocity = rotVelocity * 0.88 + scrollDelta * 0.000028;
     var targetRotY = -prog * Math.PI * 2 + autoRot;
-    currentRotY    = lerp(currentRotY, targetRotY, 0.06);
+    currentRotY    = lerp(currentRotY, targetRotY, 0.04) + rotVelocity;
     orbitGroup.rotation.y = currentRotY;
 
-    // Switch active panel
-    var newIdx = Math.min(Math.floor(prog * 4), 3);
+    // Active panel switching
+    var newIdx = Math.min(Math.floor(rawProg * 4), 3);
     if(newIdx !== activeIdx){ activeIdx = newIdx; setActivePanel(activeIdx); }
 
-    // Planet scale + emissive + moons
+    // Ring particles orbit
+    for(var i=0; i<RP_COUNT; i++){
+      rpAngles[i] += rpSpeeds[i];
+      rpPos[i*3]   = 8 * Math.cos(rpAngles[i]);
+      rpPos[i*3+1] = 0;
+      rpPos[i*3+2] = 8 * Math.sin(rpAngles[i]);
+    }
+    rpGeo.attributes.position.needsUpdate = true;
+
+    // Planets: self-rotation + scale + glow + wobble
     planets.forEach(function(p,i){
       var active = (i === activeIdx);
-      // Active planet pulses between 2.3x–2.5x
-      var tScale = active ? (2.3 + Math.sin(time * 3) * 0.1) : 1.0;
-      var ns     = lerp(p.mesh.scale.x, tScale, 0.1);
+      // Self-rotation on Y axis
+      p.mesh.rotation.y += active ? 0.015 : 0.008;
+      // Active wobble on Y position (small)
+      if(active) p.mesh.position.y += Math.sin(time * 2) * 0.002;
+      // Scale: max 1.8x cinematic, lerp 0.03
+      var tScale = active ? (1.7 + Math.sin(time * 3) * 0.05) : 1.0;
+      var ns     = lerp(p.mesh.scale.x, tScale, 0.03);
       p.mesh.scale.set(ns, ns, ns);
-      p.mat.emissiveIntensity = lerp(p.mat.emissiveIntensity, active ? 1.8 : PCFG[i].emissiveInt, 0.08);
+      p.mat.emissiveIntensity = lerp(p.mat.emissiveIntensity, active ? 1.8 : PCFG[i].emissiveInt, 0.06);
       p.moonGroup.rotation.y  = time * (0.8 + i * 0.35);
     });
 
-    // Move glow light to active planet world position
+    // Move green glow light to active planet world pos
     planets[activeIdx].mesh.getWorldPosition(_wpos);
     glowLight.position.copy(_wpos);
 
     // Stars drift
-    stars.rotation.y = time * 0.008;
+    starsTiny.rotation.y   = time * 0.006;
+    starsMed.rotation.y    = time * 0.009;
+    starsBright.rotation.y = time * 0.012;
+    // Bright stars twinkle
+    starsBright.material.opacity = 0.5 + Math.sin(time * 2.8) * 0.5;
 
-    // Camera
-    camera.position.y = 2 + Math.sin(time * 0.3) * 0.15;
-    camera.position.z = 14 - (prog * 1.5);
+    // Camera — alive float + subtle horizontal sway
+    camera.position.y = 2 + Math.sin(time * 0.4) * 0.2;
+    camera.position.x = Math.sin(time * 0.2) * 0.3;
+    camera.position.z = lerp(camera.position.z, 14 - (prog * 1.5), 0.04);
     camLight.position.copy(camera.position);
     camera.lookAt(0, 0, 0);
 
-    // ── HERO: fade by 200px, fully hidden after 300px ────────
+    // Hero fade
     if(sy > 300){
-      hero.style.opacity       = '0';
-      hero.style.visibility    = 'hidden';
-      hero.style.pointerEvents = 'none';
+      hero.style.opacity = '0'; hero.style.visibility = 'hidden'; hero.style.pointerEvents = 'none';
     } else {
-      var heroOp = Math.max(0, 1 - sy / 200);
-      hero.style.opacity       = heroOp;
-      hero.style.visibility    = '';
-      hero.style.transform     = 'translateX(-50%) translateY(' + (sy * -0.12) + 'px)';
+      var heroOp = Math.max(0, 1 - sy/200);
+      hero.style.opacity = heroOp; hero.style.visibility = '';
+      hero.style.transform = 'translateX(-50%) translateY(' + (sy * -0.12) + 'px)';
     }
 
-    // ── ORBITAL UI: hide past 400vh ──────────────────────────
+    // Orbital UI visibility
     if(sy > ORBITAL_MAX){
-      orbitalPanels.style.opacity       = '0';
-      orbitalPanels.style.pointerEvents = 'none';
-      orbitalPanels.style.display       = 'none';
-      progressDots.style.opacity        = '0';
-      progressDots.style.pointerEvents  = 'none';
+      orbitalPanels.style.display = 'none';
+      progressDots.style.opacity = '0'; progressDots.style.pointerEvents = 'none';
     } else {
-      orbitalPanels.style.opacity       = '1';
-      orbitalPanels.style.pointerEvents = '';
-      orbitalPanels.style.display       = '';
-      progressDots.style.opacity        = '1';
-      progressDots.style.pointerEvents  = '';
+      orbitalPanels.style.display = '';
+      progressDots.style.opacity = '1'; progressDots.style.pointerEvents = '';
     }
 
-    // ── NAVBAR ───────────────────────────────────────────────
+    // Navbar
     if(sy > lastNavScrollY && sy > 80){ nav.classList.add('hidden'); }
     else { nav.classList.remove('hidden'); }
     nav.classList.toggle('solid', sy > 50);
